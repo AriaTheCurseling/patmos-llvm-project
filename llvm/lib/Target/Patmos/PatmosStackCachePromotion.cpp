@@ -192,15 +192,6 @@ bool PatmosStackCachePromotion::runOnMachineFunction(MachineFunction &MF) {
 
     if (EnableArrayStackCachePromotion) {
       LLVM_DEBUG(dbgs() << "Enabled Stack Cache Array promotion for: " << MF.getFunction().getName() << "\n");
-      // Logic for handling arrays on SC
-      const std::unordered_map<unsigned, unsigned> Mappings = {
-          {Patmos::LWC, Patmos::LWS},   {Patmos::LHC, Patmos::LHS},
-          {Patmos::LBC, Patmos::LBS},   {Patmos::LHUC, Patmos::LHUS},
-          {Patmos::LBUC, Patmos::LBUS},
-
-          {Patmos::SWC, Patmos::SWS},   {Patmos::SHC, Patmos::SHS},
-          {Patmos::SBC, Patmos::SBS},
-      };
 
       for (const auto FI : StillPossibleFIs) {
         
@@ -220,20 +211,20 @@ bool PatmosStackCachePromotion::runOnMachineFunction(MachineFunction &MF) {
         
         LLVM_DEBUG(dbgs() << "Enabled Stack Cache promotion for: " << MF.getFunction().getName() << "\n");
         
-        // Put FI on SC
-        PMFI.addStackCacheAnalysisFI(FI);
-		    StackPromoArrays++;
+        
+        std::vector<MachineInstr*> IndirectMemAccess;
 
-        // Now convert all instructions
-        // This should happen after stackFrameLowering instead
-        // If the FI might be denied from the stack this will cause an error
+        // Find indirect memory access
         for (MachineInstr *Use : Uses) {
-
-          if (Mappings.find(Use->getOpcode()) != Mappings.end()) {
-            const unsigned OPnew = Mappings.at(Use->getOpcode());
-            Use->setDesc(TII->get(OPnew));
+          if (Use->mayLoadOrStore()) {
+            IndirectMemAccess.push_back(Use);
           }
         }
+
+        // Put FI on SC
+        PMFI.addStackCacheAnalysisFI(FI);
+        PMFI.addStackCacheAnalysisFIIndirectMemInstructions(FI, IndirectMemAccess);
+        StackPromoArrays++;
       }
     }
 

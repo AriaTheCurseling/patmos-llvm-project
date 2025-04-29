@@ -162,6 +162,10 @@ unsigned PatmosFrameLowering::assignFrameObjects(MachineFunction &MF,
   // This must be in sync with PatmosRegisterInfo::eliminateCallFramePseudoInstr
   unsigned int SSOffset = (hasFP(MF) ? 0 : maxFrameSize);
 
+  // Indirect memory access instructions for each FI
+  const auto& indirectMemAccess = PMFI.getStackCacheAnalysisFIIndirectMemInstructions();
+  const auto* TII = static_cast<const PatmosInstrInfo*>(TM.getInstrInfo());
+
   LLVM_DEBUG(dbgs() << "PatmosSC: " << MF.getFunction().getName() << "\n");
   LLVM_DEBUG(MFI.print(MF, dbgs()));
   for(unsigned FI = 0, FIe = MFI.getObjectIndexEnd(); FI != FIe; FI++) {
@@ -194,6 +198,26 @@ unsigned PatmosFrameLowering::assignFrameObjects(MachineFunction &MF,
 
         // reserve space on the stack cache
         SCOffset = next_SCOffset + FIsize;
+
+        const std::unordered_map<unsigned, unsigned> Mappings = {
+          {Patmos::LWC, Patmos::LWS},   {Patmos::LHC, Patmos::LHS},
+          {Patmos::LBC, Patmos::LBS},   {Patmos::LHUC, Patmos::LHUS},
+          {Patmos::LBUC, Patmos::LBUS},
+
+          {Patmos::SWC, Patmos::SWS},   {Patmos::SHC, Patmos::SHS},
+          {Patmos::SBC, Patmos::SBS},
+        };
+
+        if (indirectMemAccess.find(FI) != indirectMemAccess.end()) {
+          const auto& Uses = indirectMemAccess.at(FI);
+
+          for (MachineInstr *Use : Uses) {
+            if (Mappings.find(Use->getOpcode()) != Mappings.end()) {
+              const unsigned OPnew = Mappings.at(Use->getOpcode());
+              Use->setDesc(TII->get(OPnew));
+            }
+          }
+        }
 
         // the FI is assigned to the SC, process next FI
         continue;

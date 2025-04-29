@@ -21,6 +21,7 @@
 #include <set>
 #include <vector>
 #include <map>
+#include <unordered_map>
 
 namespace llvm {
 
@@ -103,6 +104,9 @@ class PatmosMachineFunctionInfo : public MachineFunctionInfo {
 
   /// FIs determined to be movable to stack cache
   std::vector<int> StackCacheAnalysisFIs;
+
+  /// FIs with Indirect load or store instructions
+  std::unordered_map<int, std::vector<MachineInstr*>> StackCacheAnalysisFIIndirectMemInstructions;
 
   // Index to the SinglePathFIs where the S0 spill slots start
   unsigned SPS0SpillOffset;
@@ -275,6 +279,14 @@ public:
 
   void addStackCacheAnalysisFI(int fi) {
     StackCacheAnalysisFIs.push_back(fi);
+  }
+
+  const std::unordered_map<int, std::vector<MachineInstr*>>& getStackCacheAnalysisFIIndirectMemInstructions(void) const {
+    return StackCacheAnalysisFIIndirectMemInstructions;
+  }
+
+  void addStackCacheAnalysisFIIndirectMemInstructions(int FI, std::vector<MachineInstr*> indirectMemInstructions) {
+    StackCacheAnalysisFIIndirectMemInstructions[FI] = indirectMemInstructions;
   }
 
   PatmosAnalysisInfo &getAnalysisInfo() { return AnalysisInfo; }
