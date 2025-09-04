@@ -161,6 +161,19 @@ namespace {
     });
     return IndirectUses;
   }
+
+  bool isAllLocal(std::unordered_set<MachineInstr *> Uses) {
+    return std::none_of(Uses.begin(), Uses.end(), [](MachineInstr *Inst) 
+    {
+      for (auto &DefMO : Inst->operands()) {
+        if (DefMO.getType() == MachineOperand::MachineOperandType::MO_Register) {
+          return true;
+        }
+      }
+
+      return Inst->isCall() || Inst->isReturn();
+    });
+  }
 } // namespace
 bool PatmosStackCachePromotion::runOnMachineFunction(MachineFunction &MF) {
   if (EnableStackCachePromotion) {
@@ -175,7 +188,7 @@ bool PatmosStackCachePromotion::runOnMachineFunction(MachineFunction &MF) {
       if (!MFI.isFixedObjectIndex(FI) && MFI.isAliasedObjectIndex(FI)) {
         if (!isFrameIndexUsedAsPointer(MF, FI)) {
           PMFI.addStackCacheAnalysisFI(FI);
-		  StackPromoLocValues++;
+		      StackPromoLocValues++;
         } else {
           StillPossibleFIs.insert(FI);
         }
@@ -183,44 +196,40 @@ bool PatmosStackCachePromotion::runOnMachineFunction(MachineFunction &MF) {
     }
 
     if (EnableArrayStackCachePromotion) {
-      // Logic for handling arrays on SC
-      const std::unordered_map<unsigned, unsigned> Mappings = {
-          {Patmos::LWC, Patmos::LWS},   {Patmos::LHC, Patmos::LHS},
-          {Patmos::LBC, Patmos::LBS},   {Patmos::LHUC, Patmos::LHUS},
-          {Patmos::LBUC, Patmos::LBUS},
-
-          {Patmos::SWC, Patmos::SWS},   {Patmos::SHC, Patmos::SHS},
-          {Patmos::SBC, Patmos::SBS},
-      };
+      LLVM_DEBUG(dbgs() << "Enabled Stack Cache Array promotion for: " << MF.getFunction().getName() << "\n");
 
       for (const auto FI : StillPossibleFIs) {
+        
+        if (MFI.getObjectSize(FI) == 0)
+        {
+          LLVM_DEBUG(dbgs() << "Disabled Stack Cache promotion for: " << MF.getFunction().getName() << " as it is a variable sized object\n");
+          continue;
+        }
+
         const auto &Uses = findIndirectUses(MF, FI);
-        if (Uses.empty()) {
-          PMFI.addStackCacheAnalysisFI(FI);
-		  StackPromoArrays++;
-          LLVM_DEBUG(dbgs() << "NO Indirect uses found for FI: " << FI << "\n");
-        } /*else {
 
-          const bool AllConvertible = std::all_of(
-              Uses.begin(), Uses.end(), [&Mappings](MachineInstr *Inst) {
-                return Mappings.find(Inst->getOpcode()) != Mappings.end();
-              });
+        if (!isAllLocal(Uses))
+        {
+          LLVM_DEBUG(dbgs() << "Disabled Stack Cache promotion for: " << MF.getFunction().getName() << " as not all indirect references are local\n");
+          continue;
+        }
+        
+        LLVM_DEBUG(dbgs() << "Enabled Stack Cache promotion for: " << MF.getFunction().getName() << "\n");
+        
+        
+        std::vector<MachineInstr*> IndirectMemAccess;
 
-          if (AllConvertible) {
-            dbgs() << "All instructions referencing FI: " << FI
-                              << " are convertible"
-                              << "\n";
-
-            // Put FI on SC
-            PMFI.addStackCacheAnalysisFI(FI);
-
-            // Now convert all instructions
-            for (MachineInstr *Use : Uses) {
-              const unsigned OPnew = Mappings.at(Use->getOpcode());
-              Use->setDesc(TII->get(OPnew));
-            }
+        // Find indirect memory access
+        for (MachineInstr *Use : Uses) {
+          if (Use->mayLoadOrStore()) {
+            IndirectMemAccess.push_back(Use);
           }
-        }*/
+        }
+
+        // Put FI on SC
+        PMFI.addStackCacheAnalysisFI(FI);
+        PMFI.addStackCacheAnalysisFIIndirectMemInstructions(FI, IndirectMemAccess);
+        StackPromoArrays++;
       }
     }
 
