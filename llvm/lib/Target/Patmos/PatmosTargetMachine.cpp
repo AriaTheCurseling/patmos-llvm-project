@@ -131,11 +131,11 @@ namespace {
     bool addPreISel() override {
       if (PatmosSinglePathInfo::isEnabled()) {
         // Single-path transformation requires a single exit node
-        addPass(createUnifyFunctionExitNodesPass());
+        addPass(createUnifyFunctionExitNodesPass()); //Single path code Step 1
         // Single-path transformation currently cannot deal with
         // switch/jumptables -> lower them to ITEs
-        addPass(createLowerSwitchPass());
-        addPass(createPatmosSPClonePass());
+        addPass(createLowerSwitchPass()); //Single path code Step 2
+        addPass(createPatmosSPClonePass()); //Single path code Step 3
       }
       // This pass must be after SPClone to ensure we know which functions are
       // singlepath, so that we can report errors when needed
@@ -158,19 +158,19 @@ namespace {
       }
 
       if (PatmosSinglePathInfo::isConstant()) {
-        addPass(createDataCacheAccessEliminationPass(getPatmosTargetMachine()));
+        addPass(createDataCacheAccessEliminationPass(getPatmosTargetMachine())); //Single path code step 4
       }
       if (PatmosSinglePathInfo::isEnabled()) {
-        addPass(createPatmosSPMarkPass(getPatmosTargetMachine()));
+        addPass(createPatmosSPMarkPass(getPatmosTargetMachine())); //Single path code step 5
         if(!PatmosSinglePathInfo::useNewSinglePathTransform()) {
-            addPass(createPatmosSinglePathInfoPass(getPatmosTargetMachine()));
+            addPass(createPatmosSinglePathInfoPass(getPatmosTargetMachine())); //Single path code S.6
         	addPass(createPatmosSPPreparePass(getPatmosTargetMachine()));
         }
         if (PatmosSinglePathInfo::isConstant()) {
-          addPass(createPatmosConstantLoopDominatorsPass());
+          addPass(createPatmosConstantLoopDominatorsPass()); //Single path code S.7
           addPass(createMemoryAccessNormalizationPass(getPatmosTargetMachine()));
         }
-        if(PatmosSinglePathInfo::useNewSinglePathTransform()) {
+        if(PatmosSinglePathInfo::useNewSinglePathTransform()) { //Single path code N.1
         	addPass(createLoopCountInsert(getPatmosTargetMachine()));
         }
       }
