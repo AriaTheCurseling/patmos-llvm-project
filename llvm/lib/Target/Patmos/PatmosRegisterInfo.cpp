@@ -247,12 +247,18 @@ PatmosRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   int FrameIndex        = MI.getOperand(FIOperandNum).getIndex();
   int FrameOffset       = MFI.getObjectOffset(FrameIndex);
   int FrameDisplacement = MI.getOperand(FIOperandNum+1).getImm();
-
+  
   //----------------------------------------------------------------------------
   // Stack cache info
-
+  
   const BitVector &SCFIs = PMFI.getStackCacheFIs();
-  bool isOnStackCache    = !SCFIs.empty() && FrameIndex >= 0 && SCFIs[FrameIndex];
+  bool isOnStackCache    = !SCFIs.empty() && SCFIs[FrameIndex - MFI.getObjectIndexBegin()];
+  
+  errs() << "is fi " << MI.getOperand(FIOperandNum).isFI() <<  " on num " << FIOperandNum << "\n";
+  errs() << "frame index " << FrameIndex << "\n";
+  errs() << "frame offset " << FrameOffset << "\n";
+  errs() << "frame dislacement " << FrameDisplacement << "\n";
+  errs() << "is on stack cache " << isOnStackCache << "\n";
 
   //----------------------------------------------------------------------------
   // Offset
@@ -279,6 +285,7 @@ PatmosRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   // ensure that the offset fits the instruction
   switch (opcode)
   {
+    case Patmos::LWS: case Patmos::SWS:
     case Patmos::LWC: case Patmos::LWM:
     case Patmos::SWC: case Patmos::SWM:
     case Patmos::PSEUDO_PREG_SPILL:
@@ -293,6 +300,9 @@ PatmosRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
         computedLargeOffset = true;
       }
       break;
+    
+    case Patmos::LHS: case Patmos::LHUS:
+    case Patmos::SHS:
     case Patmos::LHC: case Patmos::LHM:
     case Patmos::LHUC: case Patmos::LHUM:
     case Patmos::SHC: case Patmos::SHM:
@@ -306,6 +316,8 @@ PatmosRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
         computedLargeOffset = true;
       }
       break;
+    case Patmos::LBS: case Patmos::LBUS:
+    case Patmos::SBS:
     case Patmos::LBC: case Patmos::LBM:
     case Patmos::LBUC: case Patmos::LBUM:
     case Patmos::SBC: case Patmos::SBM:
@@ -334,7 +346,15 @@ PatmosRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
       Offset += FrameDisplacement;
       break;
     default:
-      llvm_unreachable("Unexpected operation with FrameIndex encountered.");
+      Offset += FrameDisplacement;
+
+      LLVM_DEBUG(dbgs() 
+        << "Unexpected operation with FrameIndex: "
+        << FrameIndex
+        << " and opcode: "
+        << MI.getOpcode()
+        << " encountered in offset adjustment.\n"
+      );
   }
 
   // special handling of pseudo instructions: expand
@@ -344,9 +364,12 @@ PatmosRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
       return;
   }
 
+  errs() << "opcode: " << opcode << " changed to ";
+
   // do we need to rewrite the instruction opcode?
   switch (opcode)
   {
+    // instruction rewrites
     case Patmos::LWC: case Patmos::LWM: opcode = Patmos::LWS; break;
     case Patmos::LHC: case Patmos::LHM: opcode = Patmos::LHS; break;
     case Patmos::LHUC: case Patmos::LHUM: opcode = Patmos::LHUS; break;
@@ -355,13 +378,42 @@ PatmosRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
     case Patmos::SWC: case Patmos::SWM: opcode = Patmos::SWS; break;
     case Patmos::SHC: case Patmos::SHM: opcode = Patmos::SHS; break;
     case Patmos::SBC: case Patmos::SBM: opcode = Patmos::SBS; break;
+    
+    // known safe instructions
     case Patmos::ADDi: case Patmos::ADDl: case Patmos::DBG_VALUE:
       break;
+      
+    // potentially unsafe instruction
     default:
-      llvm_unreachable("Unexpected operation with FrameIndex encountered.");
+      LLVM_DEBUG(dbgs() 
+        << "Swap encountered pootentially unsafe operation with opcode: "
+        << opcode
+        << "\n"
+      );
+      break;
   }
 
+  errs() << opcode;
+  
+  for(int i = 0; i< MI.getNumOperands(); i++){
+    if(MI.getOperand(i).isMetadata()){
+      auto &md = MI.getOperand(i).getMetadata()->getOperand(0);
+      if(auto string = dyn_cast<MDString>(md)) {
+        if(string->getString().equals("originally_LWC")) {
+          errs() << " tagged as originally_LWC";
+          break;
+        }
+      }
+    }
+  }
+
+  errs() << "\n";
+
   if (isOnStackCache) {
+    errs() << "operand 0: " << MI.getOperand(0) << "\n";
+    errs() << "operand 1: " << MI.getOperand(1) << "\n";
+    errs() << "operand 2: " << MI.getOperand(2) << "\n";
+    errs() << "operand 3: " << MI.getOperand(3) << "\n";
     const MCInstrDesc &newMCID = TII.get(opcode);
     MI.setDesc(newMCID);
   }

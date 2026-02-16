@@ -356,6 +356,14 @@ let hasSideEffects = 1 in // To ensure it is not optimized away
 def PSEUDO_LOOPBOUND : PseudoInst<(outs), (ins i32imm:$minv, i32imm:$maxv),
                           "#PSEUDO_LOOPBOUND", "[$minv,$maxv]",
                           [(PatmosLoopBound timm:$minv, timm:$maxv)]>;
+
+def PSEUDO_MEMACCESS_COUNT_INIT : PseudoInst<
+  (outs RRegs:$dst),
+  (ins RRegs:$dst2, i32imm:$imm2, i32imm:$imm),
+  "",
+  "",
+  []>;
+
 //===----------------------------------------------------------------------===//
 //  Control Flow Instructions...
 //===----------------------------------------------------------------------===//

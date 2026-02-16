@@ -85,10 +85,15 @@ void DataCacheAccessElimination::eliminateDCAccesses(MachineFunction &MF)
       auto *new_instr = MF.CreateMachineInstr( TII->get(convert_to), instr_iter->getDebugLoc());
       MachineInstrBuilder new_instr_builder(MF, new_instr);
 
+      errs() << "eliminating instuction: " << convert_to;
+
       // Give it the same operands
       for(auto op: instr_iter->operands()) {
         new_instr_builder.add(op);
+        errs() << " " << op;
       }
+
+      errs() << "\n";
 
       // Replace old instruction by new one in BB
       BB_iter->insertAfter(instr_iter, new_instr);

@@ -161,71 +161,99 @@ namespace {
     });
     return IndirectUses;
   }
+  
+  bool isAllLocal(std::unordered_set<MachineInstr *> Uses) {
+    return std::none_of(Uses.begin(), Uses.end(), [](MachineInstr *Inst) 
+    {
+      for (auto &DefMO : Inst->operands()) {
+        if (DefMO.getType() == MachineOperand::MachineOperandType::MO_Register) {
+          return true;
+        }
+      }
+
+      return Inst->isCall() || Inst->isReturn();
+    });
+  }
 } // namespace
 bool PatmosStackCachePromotion::runOnMachineFunction(MachineFunction &MF) {
   if (EnableStackCachePromotion) {
-    LLVM_DEBUG(dbgs() << "Enabled Stack Cache promotion for: "
-                      << MF.getFunction().getName() << "\n");
+    errs() << "Enabled Stack Cache promotion for: " << MF.getFunction().getName() << "\n";
 
     MachineFrameInfo &MFI = MF.getFrameInfo();
     PatmosMachineFunctionInfo &PMFI = *MF.getInfo<PatmosMachineFunctionInfo>();
 
     std::unordered_set<unsigned> StillPossibleFIs;
-    for (unsigned FI = 0, FIe = MFI.getObjectIndexEnd(); FI != FIe; FI++) {
-      if (!MFI.isFixedObjectIndex(FI) && MFI.isAliasedObjectIndex(FI)) {
+    for (signed FI = MFI.getObjectIndexBegin(), FIe = MFI.getObjectIndexEnd(); FI != FIe; FI++) {
+      errs() << "handdling FI " << FI;
+      // if (!MFI.isFixedObjectIndex(FI) && MFI.isAliasedObjectIndex(FI)) {
+      if (MFI.isAliasedObjectIndex(FI)) {
         if (!isFrameIndexUsedAsPointer(MF, FI)) {
+          errs() << " its normal promotable";
           PMFI.addStackCacheAnalysisFI(FI);
-		  StackPromoLocValues++;
+		      StackPromoLocValues++;
         } else {
+          errs() << " its maybe promotable";
           StillPossibleFIs.insert(FI);
         }
       }
+      else{
+        StillPossibleFIs.insert(FI);
+        errs() << " its not aliased (and therefore not promotable)";
+      }
+      errs() << "\n";
     }
 
     if (EnableArrayStackCachePromotion) {
-      // Logic for handling arrays on SC
-      const std::unordered_map<unsigned, unsigned> Mappings = {
-          {Patmos::LWC, Patmos::LWS},   {Patmos::LHC, Patmos::LHS},
-          {Patmos::LBC, Patmos::LBS},   {Patmos::LHUC, Patmos::LHUS},
-          {Patmos::LBUC, Patmos::LBUS},
+      errs() << "Enabled Stack Cache Array promotion for: " << MF.getFunction().getName() << "\n";
 
-          {Patmos::SWC, Patmos::SWS},   {Patmos::SHC, Patmos::SHS},
-          {Patmos::SBC, Patmos::SBS},
-      };
+      for (auto &MBB : MF) {
+        for (auto &MI : MBB) {
+          if (MI.getOpcode()  == Patmos::LWC){
+	          auto &C = MF.getFunction().getContext();
+
+	          MI.addOperand(MF, MachineOperand::CreateMetadata(MDNode::get(C, MDString::get(C, "originally_LWC"))));
+          }
+        }
+      }
 
       for (const auto FI : StillPossibleFIs) {
+        
+        if (MFI.getObjectSize(FI) == 0)
+        {
+          errs() << "Disabled Extra Stack Cache promotion for: " << MF.getFunction().getName() << " as it is a variable sized object\n";
+          continue;
+        }
+
         const auto &Uses = findIndirectUses(MF, FI);
-        if (Uses.empty()) {
-          PMFI.addStackCacheAnalysisFI(FI);
-		  StackPromoArrays++;
-          LLVM_DEBUG(dbgs() << "NO Indirect uses found for FI: " << FI << "\n");
-        } /*else {
+        
+        if (!isAllLocal(Uses))
+        {
+          errs() << "Disabled Extra Stack Cache promotion for: " << MF.getFunction().getName() << " as not all indirect references are local\n";
+          continue;
+        }
 
-          const bool AllConvertible = std::all_of(
-              Uses.begin(), Uses.end(), [&Mappings](MachineInstr *Inst) {
-                return Mappings.find(Inst->getOpcode()) != Mappings.end();
-              });
+        errs() << "Enabled Extra Stack Cache promotion for: " << MF.getFunction().getName() << "\n";
 
-          if (AllConvertible) {
-            dbgs() << "All instructions referencing FI: " << FI
-                              << " are convertible"
-                              << "\n";
-
-            // Put FI on SC
-            PMFI.addStackCacheAnalysisFI(FI);
-
-            // Now convert all instructions
-            for (MachineInstr *Use : Uses) {
-              const unsigned OPnew = Mappings.at(Use->getOpcode());
-              Use->setDesc(TII->get(OPnew));
-            }
+        // Find indirect memory access
+        for (MachineInstr *Use : Uses) {
+          if (Use->mayLoadOrStore()) {
+	          auto &C = MF.getFunction().getContext();
+            
+	          Use->addOperand(MF, MachineOperand::CreateMetadata(MDNode::get(C, MDString::get(C, "indidrect_memory_access"))));
+	          Use->addOperand(MF, MachineOperand::CreateMetadata(MDNode::get(C, ConstantAsMetadata::get(ConstantInt::get(C, llvm::APInt(64, FI, false))))));
           }
-        }*/
+        }
+        
+        // Put FI on SC
+        PMFI.addStackCacheAnalysisFI(FI);
+        StackPromoArrays++;
       }
     }
 
+    // errs() << "Tagged " << StackPromoArrays << " array FIs and" << StackPromoLocValues << " normal FIs" << "\n";
+
     for (const int FI : PMFI.getStackCacheAnalysisFIs()) {
-      LLVM_DEBUG(dbgs() << "FI on Stack Cache: " << FI << "\n");
+      errs() << "FI on Stack Cache: " << FI << "\n";
     }
   }
   return true;

@@ -331,139 +331,141 @@ memoryAccessCompensation(
       }
     });
   }
-  worklist = {}; // Clear queue for reuse
-
-  std::queue<const MachineBasicBlock*> header_worklist;
-  std::set<const MachineBasicBlock*> done_headers;
-  std::set<std::pair<const MachineBasicBlock*,const MachineBasicBlock*>> done_edges;
-  header_worklist.push(start_mbb);
-
-  while(!header_worklist.empty()){
-    auto current_header = header_worklist.front();
-    header_worklist.pop();
 
 
-    std::for_each(current_header->succ_begin(), current_header->succ_end(), [&](auto succ){
-      worklist.push(std::make_tuple(current_header, succ, 0));
-      LLVM_DEBUG(
-        dbgs() << "Enqueueing header's outgoing edge '" << current_header->getName()
-          << "' -> '" << succ->getName() << "': " << 0 << "\n";
-      );
-    });
+  // worklist = {}; // Clear queue for reuse
 
-    while(!worklist.empty()) {
-      const MachineBasicBlock *from, *to;
-      unsigned count;
-      std::tie(from,to,count) = worklist.front();
-      worklist.pop();
+  // std::queue<const MachineBasicBlock*> header_worklist;
+  // std::set<const MachineBasicBlock*> done_headers;
+  // std::set<std::pair<const MachineBasicBlock*,const MachineBasicBlock*>> done_edges;
+  // header_worklist.push(start_mbb);
 
-      LLVM_DEBUG(
-        dbgs() << "\nRecalculating Edge '" << from->getName() << "' -> '" << to->getName() << "': " << count << "\n";
-      );
+  // while(!header_worklist.empty()){
+  //   auto current_header = header_worklist.front();
+  //   header_worklist.pop();
 
-      auto to_is_end_block = to->succ_begin() == to->succ_end();
-      auto to_multi_non_latch_preds = std::count_if(to->pred_begin(), to->pred_end(), [&](auto pred){
-                              return !(LI->isLoopHeader(to) && LI->getLoopFor(to)->contains(pred));
-                            }) > 1;
-      auto to_header = LI->isLoopHeader(to);
-      auto is_latch_edge = to_header && LI->getLoopFor(to)->contains(from);
-      auto to_has_multiple_preds = to->pred_size() > 1;
-      auto from_has_multiple_preds = from->pred_size() > 1;
-      bool update_always;
 
-      // Record any blocks that return from the function
-      // for use at the end
-      if(to_is_end_block) {
-        end_blocks.insert(to);
-      }
+  //   std::for_each(current_header->succ_begin(), current_header->succ_end(), [&](auto succ){
+  //     worklist.push(std::make_tuple(current_header, succ, 0));
+  //     LLVM_DEBUG(
+  //       dbgs() << "Enqueueing header's outgoing edge '" << current_header->getName()
+  //         << "' -> '" << succ->getName() << "': " << 0 << "\n";
+  //     );
+  //   });
 
-      if(
-          to_is_end_block ||
-          to_multi_non_latch_preds ||
-          is_latch_edge
-      ){
-        auto original_comp = compensation[{from, to}];
-        LLVM_DEBUG(
-          dbgs() << "Assigning '" << from->getName() << "' -> '" << to->getName() << "': "
-            << original_comp << " + " << count << "\n";
-        );
-        compensation[{from, to}] += count;
-        count = 0;
-        update_always = false;
-      } else if( to_header ) {
-        // When the target is a loop header, pass the accesses count on to the loop exits
-        auto edge_comp = compensation[{from, to}];
-        auto *loop = LI->getLoopFor(to);
-        SmallVector<std::pair<MachineBasicBlock*, MachineBasicBlock*>> loop_exit_edges;
-        loop->getExitEdges(loop_exit_edges);
-        for(auto edge: loop_exit_edges) {
-          LLVM_DEBUG(
-            dbgs() << "Enqueueing Exit Edge '" << edge.first->getName()
-              << "' -> '" << edge.second->getName() << "': " <<  edge_comp + count << "\n";
-          );
-          worklist.push(std::make_tuple(edge.first, edge.second, count + edge_comp));
-        }
-        compensation[{from, to}] = 0;
-        count = 0;
-        update_always = false;
+  //   while(!worklist.empty()) {
+  //     const MachineBasicBlock *from, *to;
+  //     unsigned count;
+  //     std::tie(from,to,count) = worklist.front();
+  //     worklist.pop();
 
-      } else {
-        auto edge_comp = compensation[{from, to}];
-        count += edge_comp;
-        compensation[{from, to}] = 0;
-        update_always = true;
-      }
+  //     LLVM_DEBUG(
+  //       dbgs() << "\nRecalculating Edge '" << from->getName() << "' -> '" << to->getName() << "': " << count << "\n";
+  //     );
 
-      if(!LI->isLoopHeader(to) && (update_always || !is_latch_edge)) {
-        std::for_each(to->succ_begin(), to->succ_end(), [&](auto succ){
-            LLVM_DEBUG(
-              dbgs() << "Enqueueing Edge '" << to->getName()
-                << "' -> '" << succ->getName() << "': " << count << "\n";
-            );
-            worklist.push(std::make_tuple(to, succ, count));
-        });
-      }
+  //     auto to_is_end_block = to->succ_begin() == to->succ_end();
+  //     auto to_multi_non_latch_preds = std::count_if(to->pred_begin(), to->pred_end(), [&](auto pred){
+  //                             return !(LI->isLoopHeader(to) && LI->getLoopFor(to)->contains(pred));
+  //                           }) > 1;
+  //     auto to_header = LI->isLoopHeader(to);
+  //     auto is_latch_edge = to_header && LI->getLoopFor(to)->contains(from);
+  //     auto to_has_multiple_preds = to->pred_size() > 1;
+  //     auto from_has_multiple_preds = from->pred_size() > 1;
+  //     bool update_always;
 
-      if(LI->isLoopHeader(to) && !done_headers.count(to)) {
-        header_worklist.push(to);
-        LLVM_DEBUG(
-          dbgs() << "Enqueueing header '" << to->getName() << "'\n";
-        );
-        done_headers.insert(to);
-      }
-    }
-  }
-  LLVM_DEBUG(dbgs() << "\n");
+  //     // Record any blocks that return from the function
+  //     // for use at the end
+  //     if(to_is_end_block) {
+  //       end_blocks.insert(to);
+  //     }
 
-  // Lastly, since end blocks don't have successors, we must account
-  // for their accesses in their incoming edges.
-  // So, add each end block's count to all its incoming edges.
-  for(auto eb: end_blocks) {
-    std::for_each(eb->pred_begin(), eb->pred_end(), [&](auto pred){
-      auto old_value = compensation.count({pred, eb})? compensation[{pred, eb}] : 0;
-      auto add_value = countAccesses(eb);
-      if((old_value + add_value) != 0){
-        LLVM_DEBUG(
-          dbgs() << "Correcting end Edge '" << pred->getName() << "' -> '" <<
-            eb->getName() << "': " << old_value << " + " << add_value << "'\n";
-        );
-        compensation[{pred, eb}] = old_value + add_value;
-      }
-    });
+  //     if(
+  //         to_is_end_block ||
+  //         to_multi_non_latch_preds ||
+  //         is_latch_edge
+  //     ){
+  //       auto original_comp = compensation[{from, to}];
+  //       LLVM_DEBUG(
+  //         dbgs() << "Assigning '" << from->getName() << "' -> '" << to->getName() << "': "
+  //           << original_comp << " + " << count << "\n";
+  //       );
+  //       compensation[{from, to}] += count;
+  //       count = 0;
+  //       update_always = false;
+  //     } else if( to_header ) {
+  //       // When the target is a loop header, pass the accesses count on to the loop exits
+  //       auto edge_comp = compensation[{from, to}];
+  //       auto *loop = LI->getLoopFor(to);
+  //       SmallVector<std::pair<MachineBasicBlock*, MachineBasicBlock*>> loop_exit_edges;
+  //       loop->getExitEdges(loop_exit_edges);
+  //       for(auto edge: loop_exit_edges) {
+  //         LLVM_DEBUG(
+  //           dbgs() << "Enqueueing Exit Edge '" << edge.first->getName()
+  //             << "' -> '" << edge.second->getName() << "': " <<  edge_comp + count << "\n";
+  //         );
+  //         worklist.push(std::make_tuple(edge.first, edge.second, count + edge_comp));
+  //       }
+  //       compensation[{from, to}] = 0;
+  //       count = 0;
+  //       update_always = false;
 
-    // Remove any zero-assigned edges
-    // This makes it easier to test (don't have to check 0-edges) and debug
-    while(true){
-      auto found = std::find_if(compensation.begin(), compensation.end(),[&](auto entry){
-        return entry.second == 0;
-      });
-      if(found != compensation.end()) {
-        compensation.erase(found);
-      } else {
-        break;
-      }
-    }
-  }
+  //     } else {
+  //       auto edge_comp = compensation[{from, to}];
+  //       count += edge_comp;
+  //       compensation[{from, to}] = 0;
+  //       update_always = true;
+  //     }
+
+  //     if(!LI->isLoopHeader(to) && (update_always || !is_latch_edge)) {
+  //       std::for_each(to->succ_begin(), to->succ_end(), [&](auto succ){
+  //           LLVM_DEBUG(
+  //             dbgs() << "Enqueueing Edge '" << to->getName()
+  //               << "' -> '" << succ->getName() << "': " << count << "\n";
+  //           );
+  //           worklist.push(std::make_tuple(to, succ, count));
+  //       });
+  //     }
+
+  //     if(LI->isLoopHeader(to) && !done_headers.count(to)) {
+  //       header_worklist.push(to);
+  //       LLVM_DEBUG(
+  //         dbgs() << "Enqueueing header '" << to->getName() << "'\n";
+  //       );
+  //       done_headers.insert(to);
+  //     }
+  //   }
+  // }
+  // LLVM_DEBUG(dbgs() << "\n");
+
+  // // Lastly, since end blocks don't have successors, we must account
+  // // for their accesses in their incoming edges.
+  // // So, add each end block's count to all its incoming edges.
+  // for(auto eb: end_blocks) {
+  //   std::for_each(eb->pred_begin(), eb->pred_end(), [&](auto pred){
+  //     auto old_value = compensation.count({pred, eb})? compensation[{pred, eb}] : 0;
+  //     auto add_value = countAccesses(eb);
+  //     if((old_value + add_value) != 0){
+  //       LLVM_DEBUG(
+  //         dbgs() << "Correcting end Edge '" << pred->getName() << "' -> '" <<
+  //           eb->getName() << "': " << old_value << " + " << add_value << "'\n";
+  //       );
+  //       compensation[{pred, eb}] = old_value + add_value;
+  //     }
+  //   });
+
+  //   // Remove any zero-assigned edges
+  //   // This makes it easier to test (don't have to check 0-edges) and debug
+  //   while(true){
+  //     auto found = std::find_if(compensation.begin(), compensation.end(),[&](auto entry){
+  //       return entry.second == 0;
+  //     });
+  //     if(found != compensation.end()) {
+  //       compensation.erase(found);
+  //     } else {
+  //       break;
+  //     }
+  //   }
+  // }
   return compensation;
 }
 

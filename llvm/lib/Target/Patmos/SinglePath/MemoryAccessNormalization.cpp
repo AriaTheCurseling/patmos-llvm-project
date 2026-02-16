@@ -312,24 +312,22 @@ std::pair<unsigned, Register> MemoryAccessNormalization::compensateEntryBlock(
 
   auto insert_count = 1;
   if(should_insert){
-	if(MF.size() == 1) {
-		assert(!PatmosSinglePathInfo::isRootLike(MF) &&
-			"Root-like single-block function shouldn't need decrementing");
-	}
-	// Single-block functions will not have any edges to decrement the counter
-	// so just reduce the initial count instead.
-	auto max_comp = MF.size() == 1? 0 : max_accesses;
+    if(MF.size() == 1) {
+      assert(!PatmosSinglePathInfo::isRootLike(MF) &&
+        "Root-like single-block function shouldn't need decrementing");
+    }
+    // Single-block functions will not have any edges to decrement the counter
+    // so just reduce the initial count instead.
+    auto max_comp = MF.size() == 1? 0 : max_accesses;
 
-    auto count_opcode = max_comp > 4095? Patmos::LIl : Patmos::LIi;
-    BuildMI(*entry, entry->getFirstTerminator(), DL, TII->get(count_opcode),
+    BuildMI(*entry, entry->getFirstTerminator(), DL, TII->get(Patmos::PSEUDO_MEMACCESS_COUNT_INIT),
       init_reg)
-      .addReg(Patmos::NoRegister).addImm(0) // May be predicated
+      .addReg(Patmos::NoRegister)
+      .addImm(0) // May be predicated
       .addImm(max_comp);
-
-    LLVM_DEBUG(
-      dbgs() << "Inserted counter initializer in '" << entry->getName() << "': "
+   
+      errs() << "Inserted counter initializer in '" << entry->getName() << "': "
         << printReg(init_reg, TRI) << " = " << max_comp << "\n";
-    );
   }
   return std::make_pair(insert_count, init_reg);
 }
@@ -407,7 +405,7 @@ unsigned MemoryAccessNormalization::compensateMerge(
         phi_reg_inst_builder.addReg(std::get<2>(count));
         phi_reg_inst_builder.addMBB(std::get<0>(count));
       }
-      LLVM_DEBUG(dbgs() << "Joined predecessor counts in '" << current->getName() << "': " << printReg(block_regs[current]) << "\n";);
+      errs() << "Joined predecessor counts in '" << current->getName() << "': " << printReg(block_regs[current]) << "\n";
     }
   } else {
 	// Create a PHI instruction to unify the decremented counter from each predecessor
@@ -442,10 +440,9 @@ unsigned MemoryAccessNormalization::compensateMerge(
 		  phi_decremented_counter_phi.addReg(dec_reg);
 		  phi_decremented_counter_phi.addMBB(pred);
 
-		  LLVM_DEBUG(
-		    dbgs() << "Inserted decrement count in merge predecessor '" << pred->getName() << "' as: ";
-		    dec_instr.getInstr()->dump();
-		  );
+		    errs() << "Inserted decrement count in merge predecessor '" << pred->getName() << "' as: ";
+        dec_instr.getInstr()->dump();
+        errs() << "\n";
 		}
       }
     }

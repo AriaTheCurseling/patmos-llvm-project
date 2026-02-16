@@ -1293,9 +1293,11 @@ void PatmosSPReduce::eliminateFrameIndices(MachineFunction &MF) {
     for (MachineBasicBlock::iterator MI = MBB->begin(), MIe = MBB->end();
         MI != MIe; ++MI) {
       if (MI->mayStore() && MI->getOperand(2).isFI()) {
+        errs() << "may store FI\n";
         TRI->eliminateFrameIndex(MI, 0, 2);
       }
       if (MI->mayLoad() && MI->getOperand(3).isFI()) {
+        errs() << "may load FI\n";
         TRI->eliminateFrameIndex(MI, 0, 3);
       }
     }

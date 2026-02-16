@@ -106,18 +106,18 @@ void PatmosFrameLowering::assignFIsToStackCache(MachineFunction &MF,
     // Predicates are handled via aliasing to S0. They appear here when we
     // skip assigning s0 to a stack slot, not really sure why.
     if (Patmos::PRegsRegClass.contains(i->getReg())) continue;
-    SCFIs[i->getFrameIdx()] = true;
+    SCFIs[i->getFrameIdx() - MFI.getObjectIndexBegin()] = true;
   }
 
   // RegScavenging register
   if (TRI->requiresRegisterScavenging(MF)) {
-    SCFIs[PMFI.getRegScavengingFI()] = true;
+    SCFIs[PMFI.getRegScavengingFI() - MFI.getObjectIndexBegin()] = true;
   }
 
   // Spill slots / storage introduced for single path conversion
   const std::vector<int> &SinglePathFIs = PMFI.getSinglePathFIs();
   for(unsigned i=0; i<SinglePathFIs.size(); i++) {
-    SCFIs[SinglePathFIs[i]] = true;
+    SCFIs[SinglePathFIs[i] - MFI.getObjectIndexBegin()] = true;
   }
 
   // find all FIs that are spill slots
@@ -127,12 +127,12 @@ void PatmosFrameLowering::assignFIsToStackCache(MachineFunction &MF,
 
     // find all spill slots and locations for callee saved registers
     if (MFI.isSpillSlotObjectIndex(FI))
-      SCFIs[FI] = true;
+      SCFIs[FI - MFI.getObjectIndexBegin()] = true;
 
 
     const std::vector<int> &StackCacheAllocatable = PMFI.getStackCacheAnalysisFIs();
     for(unsigned i=0; i<StackCacheAllocatable.size(); i++) {
-      SCFIs[StackCacheAllocatable[i]] = true;
+      SCFIs[StackCacheAllocatable[i] - MFI.getObjectIndexBegin()] = true;
     }
   }
 }
@@ -147,7 +147,7 @@ unsigned PatmosFrameLowering::assignFrameObjects(MachineFunction &MF,
   unsigned maxFrameSize = MFI.getMaxCallFrameSize();
 
   // defaults to false (all objects are assigned to shadow stack)
-  BitVector SCFIs(MFI.getObjectIndexEnd());
+  BitVector SCFIs(MFI.getObjectIndexEnd() - MFI.getObjectIndexBegin());
 
   if (UseStackCache) {
     assignFIsToStackCache(MF, SCFIs);
@@ -164,9 +164,14 @@ unsigned PatmosFrameLowering::assignFrameObjects(MachineFunction &MF,
 
   LLVM_DEBUG(dbgs() << "PatmosSC: " << MF.getFunction().getName() << "\n");
   LLVM_DEBUG(MFI.print(MF, dbgs()));
-  for(unsigned FI = 0, FIe = MFI.getObjectIndexEnd(); FI != FIe; FI++) {
-    if (MFI.isDeadObjectIndex(FI))
+  for(signed FI = MFI.getObjectIndexBegin(), FIe = MFI.getObjectIndexEnd(); FI != FIe; FI++) {
+    errs() << "Frame Lowering for FI " << FI; 
+
+    if (MFI.isDeadObjectIndex(FI)){
+      errs() << " rejected\n";
       continue;
+    }
+    errs() << " accepted\n";
 
     unsigned FIalignment = MFI.getObjectAlignment(FI);
     int64_t FIsize = MFI.getObjectSize(FI);
@@ -176,18 +181,18 @@ unsigned PatmosFrameLowering::assignFrameObjects(MachineFunction &MF,
     }
 
     // be sure to catch some special stack objects not expected for Patmos
-    assert(!MFI.isFixedObjectIndex(FI) && !MFI.isObjectPreAllocated(FI));
+    // assert(!MFI.isFixedObjectIndex(FI) && !MFI.isObjectPreAllocated(FI)); TODO:: reenalbe
 
     // assigned to stack cache or shadow stack?
-    if (SCFIs[FI]) {
+    if (SCFIs[FI - MFI.getObjectIndexBegin()]) {
       // alignment
       unsigned int next_SCOffset = align(SCOffset, FIalignment);
 
       // check if the FI still fits into the SC
       if (align(next_SCOffset + FIsize, getEffectiveStackCacheBlockSize()) <=
           getEffectiveStackCacheSize()) {
-        LLVM_DEBUG(dbgs() << "PatmosSC: FI: " << FI << " on SC: " << next_SCOffset
-                    << "(" << MFI.getObjectOffset(FI) << ")\n");
+        errs() << "PatmosSC: FI: " << FI << " on SC: " << next_SCOffset
+                    << "(" << MFI.getObjectOffset(FI) << ")\n";
 
         // reassign stack offset
         MFI.setObjectOffset(FI, next_SCOffset);
@@ -201,20 +206,20 @@ unsigned PatmosFrameLowering::assignFrameObjects(MachineFunction &MF,
       else {
         // the FI did not fit in the SC -- fall-through and put it on the 
         // shadow stack
-        SCFIs[FI] = false;
+        SCFIs[FI - MFI.getObjectIndexBegin()] = false;
         FIsNotFitSC++;
       }
     }
 
     // assign the FI to the shadow stack
     {
-      assert(!SCFIs[FI]);
+      assert(!SCFIs[FI - MFI.getObjectIndexBegin()]);
 
       // alignment
       SSOffset = align(SSOffset, FIalignment);
 
-      LLVM_DEBUG(dbgs() << "PatmosSC: FI: " << FI << " on SS: " << SSOffset
-                   << "(" << MFI.getObjectOffset(FI) << ")\n");
+      errs() << "PatmosSC: FI: " << FI << " on SS: " << SSOffset
+                   << "(" << MFI.getObjectOffset(FI) << ")\n";
 
       // reassign stack offset
       MFI.setObjectOffset(FI, SSOffset);
@@ -314,6 +319,23 @@ void PatmosFrameLowering::emitPrologue(MachineFunction &MF, MachineBasicBlock &M
 
     // patch all call sites
     patchCallSites(MF);
+  }
+
+  errs() << "emit prologue for machine function: " << MF.getName() << "\n";
+
+  for (auto &MBB : MF) {
+    for (auto MI = MBB.begin(); MI != MBB.end(); ) {
+      if (MI->getOpcode() == Patmos::PSEUDO_MEMACCESS_COUNT_INIT) {
+        int64_t Imm  = MI->getOperand(3).getImm();
+        
+        // Replace it with the real instruction
+        unsigned Opcode = Imm > 4095 ? Patmos::LIl : Patmos::LIi;
+        MI->setDesc(TII->get(Opcode));
+
+        errs() << "removed pseudo memaccess\n";
+      }
+      ++MI;
+    }
   }
 
   //----------------------------------------------------------------------------
